@@ -255,7 +255,7 @@ def fused_linear_cross_entropy_forward(
             reduction=reduction,
             V=V,
             BV=BV,
-            num_warps=32
+            num_warps=16
         )
 
         # gradient of logits is computed in-place by the above triton kernel and is of shape: C x V
@@ -295,7 +295,7 @@ def fused_linear_cross_entropy_backward(
             g=do,
             N=N*H,
             B=B,
-            num_warps=32,
+            num_warps=16,
         )
 
         # handle dw
@@ -306,7 +306,7 @@ def fused_linear_cross_entropy_backward(
                 g=do,
                 N=V*H,
                 B=B,
-                num_warps=32,
+                num_warps=16,
             )
 
         if db is not None:
@@ -316,7 +316,7 @@ def fused_linear_cross_entropy_backward(
                 g=do,
                 N=V,
                 B=B,
-                num_warps=32,
+                num_warps=16,
             )
     return dx, dw, db
 
