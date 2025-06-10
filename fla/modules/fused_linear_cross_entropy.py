@@ -25,7 +25,6 @@ from fla.utils import input_guard
 # The optimal maximum block size depends on your hardware, your kernel, and your dtype
 MAX_FUSED_SIZE = 65536 // 2
 
-
 @triton.jit
 def cross_entropy_kernel(
     logits,
@@ -295,7 +294,7 @@ def fused_linear_cross_entropy_backward(
             g=do,
             N=N*H,
             B=B,
-            num_warps=16,
+            num_warps=32,
         )
 
         # handle dw
@@ -306,7 +305,7 @@ def fused_linear_cross_entropy_backward(
                 g=do,
                 N=V*H,
                 B=B,
-                num_warps=16,
+                num_warps=32,
             )
 
         if db is not None:
@@ -316,7 +315,7 @@ def fused_linear_cross_entropy_backward(
                 g=do,
                 N=V,
                 B=B,
-                num_warps=16,
+                num_warps=32,
             )
     return dx, dw, db
 

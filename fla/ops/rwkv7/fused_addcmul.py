@@ -14,13 +14,47 @@ logger = logging.getLogger(__name__)
 if not check_pytorch_version('2.4'):
     logger.warning('PyTorch < 2.4 detected - computations may be slower due to lack of optimizations')
 
+import warnings
+def config_prune(configs):
 
-@triton.autotune(
-    configs=[
+    if torch.version.hip:
+        try:
+            # set warp size based on gcn architecure 
+            gcn_arch_name = torch.cuda.get_device_properties(0).gcnArchName
+            if "gfx10" in gcn_arch_name or "gfx11" in gcn_arch_name:
+                # radeon
+                warp_size = 32
+            else:
+                # instinct
+                warp_size = 64
+        except AttributeError as e:
+            # fall back to crude method to set warp size
+            device_name = torch.cuda.get_device_properties(0).name
+            if 'instinct' in device_name.lower():
+                warp_size = 64
+            else:
+                warp_size = 32
+            warnings.warn(f"{e}, warp size set to {warp_size} based on device name: {device_name}", UserWarning)
+
+    else:
+        # cuda 
+        warp_size = 32    
+
+    max_block_sz = 1024
+    max_num_warps = max_block_sz // warp_size
+    pruned_configs = [config for config in configs if config.num_warps <= max_num_warps]
+    return pruned_configs
+
+configs_autotune = [
         triton.Config({'BLOCK_SIZE': block_size}, num_warps=num_warps)
         for block_size in [128, 256, 512, 1024, 2048, 4096, 8192]
         for num_warps in [1, 2, 4, 8, 16, 32]
-    ],
+    ]
+
+pruned_configs_autotune = config_prune(configs_autotune)
+
+@triton.autotune(
+    configs=pruned_configs_autotune,
     key=['hidden_dim'],
     use_cuda_graph=use_cuda_graph,
 )
@@ -77,11 +111,7 @@ def fused_addcmul_fwd_kernel(
 
 
 @triton.autotune(
-    configs=[
-        triton.Config({'BLOCK_SIZE': block_size}, num_warps=num_warps)
-        for block_size in [128, 256, 512, 1024, 2048, 4096, 8192]
-        for num_warps in [1, 2, 4, 8, 16, 32]
-    ],
+    configs=pruned_configs_autotune,
     key=['hidden_dim'],
     use_cuda_graph=use_cuda_graph,
 )
