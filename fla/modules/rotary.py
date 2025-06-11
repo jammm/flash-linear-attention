@@ -30,13 +30,48 @@ def rotary_embedding_ref(x, cos, sin, interleaved=False):
     sin = repeat(sin, '... d -> ... 1 (2 d)' if not interleaved else '... d -> ... 1 (d 2)')
     return torch.cat([x[..., :ro_dim] * cos + rotate_half(x[..., :ro_dim], interleaved) * sin, x[..., ro_dim:]], -1)
 
+import warnings
 
-@triton.autotune(
-    configs=[
+def config_prune(configs):
+
+    if torch.version.hip:
+        try:
+            # set warp size based on gcn architecure 
+            gcn_arch_name = torch.cuda.get_device_properties(0).gcnArchName
+            if "gfx10" in gcn_arch_name or "gfx11" in gcn_arch_name:
+                # radeon
+                warp_size = 32
+            else:
+                # instinct
+                warp_size = 64
+        except AttributeError as e:
+            # fall back to crude method to set warp size
+            device_name = torch.cuda.get_device_properties(0).name
+            if 'instinct' in device_name.lower():
+                warp_size = 64
+            else:
+                warp_size = 32
+            warnings.warn(f"{e}, warp size set to {warp_size} based on device name: {device_name}", UserWarning)
+
+    else:
+        # cuda 
+        warp_size = 32    
+
+    max_block_sz = 1024
+    max_num_warps = max_block_sz // warp_size
+    pruned_configs = [config for config in configs if config.num_warps <= max_num_warps]
+    return pruned_configs
+
+configs_autotune = [
         triton.Config({}, num_warps=num_warps, num_stages=num_stages)
         for num_warps in [2, 4, 8, 16, 32]
         for num_stages in [2, 3, 4]
-    ],
+    ]
+
+pruned_configs_autotune = config_prune(configs_autotune)
+
+@triton.autotune(
+    configs=pruned_configs_autotune,
     key=['B', 'H', 'D', 'INTERLEAVED'],
 )
 @triton.jit
